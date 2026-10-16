@@ -1,0 +1,38 @@
+# Build environment for the UOS-compatibility-oriented AppImage.
+# Deliberately Ubuntu 22.04 (glibc 2.35), NOT 24.04 (glibc 2.39) — the base
+# distro's glibc sets the ABI floor of every binary inside the AppImage.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl wget file git pkg-config \
+        libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+        libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev \
+        dpkg-dev fakeroot \
+        libegl1 libgl1 libglx-mesa0 libegl-mesa0 libgl1-mesa-dri libgbm1 libdrm2 \
+        libopengl0 libnss3 \
+        xvfb xauth xdotool dbus-x11 imagemagick x11-apps \
+        python3 python3-pil \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG NODE_VERSION=24.15.0
+RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+        -o /tmp/node.tar.xz \
+    && tar -xJf /tmp/node.tar.xz -C /opt \
+    && ln -sf "/opt/node-v${NODE_VERSION}-linux-x64/bin/node" /usr/local/bin/node \
+    && ln -sf "/opt/node-v${NODE_VERSION}-linux-x64/bin/npm"  /usr/local/bin/npm \
+    && ln -sf "/opt/node-v${NODE_VERSION}-linux-x64/bin/npx"  /usr/local/bin/npx \
+    && rm /tmp/node.tar.xz
+
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo
+RUN curl -fsSL https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --profile minimal \
+    && /opt/cargo/bin/rustc --version
+ENV PATH=/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin
+
+# linuxdeploy ships as an AppImage; without FUSE in the container it must extract and run.
+ENV APPIMAGE_EXTRACT_AND_RUN=1
+
+WORKDIR /work
