@@ -9,6 +9,8 @@ This repository is a **fork** of
 Only the Simplified Chinese locale file:
 
 - `src/localization/messages/ch.json` — rewritten (325 of 1066 entries)
+- `tools/linux/` — reproducible build, static ELF audit and headless gate
+- `docs/APPIMAGE-HARDENING.md` — packaging rationale
 - `package.json`, `src-tauri/Cargo.toml`,
   `src-tauri/default-file-manager-common/Cargo.toml`,
   `src-tauri/default-file-manager-launcher/Cargo.toml` — version bumped to
@@ -38,15 +40,33 @@ found by searching in Chinese.
 
 ## Build provenance
 
-Built locally by the fork owner, **not** by the upstream project's CI:
+Built locally by the fork owner, **not** by the upstream project's CI.
 
-- Ubuntu 24.04, WebKitGTK **2.52.6**, `NO_STRIP=true tauri build`
-- Upstream's CI pins WebKitGTK to **2.44.0-2** to avoid
+- Build base: **Ubuntu 22.04 (glibc 2.35)** — deliberately, because the build
+  base sets the ABI floor of every binary in the bundle. The previous build
+  used Ubuntu 24.04 and therefore required glibc 2.39, which locked the
+  AppImage out of Ubuntu 22.04, Debian 12 and every current domestic
+  enterprise desktop.
+- Upstream's CI pins WebKitGTK to `2.44.0-2` because newer versions triggered
   `Could not create default EGL display: EGL_BAD_PARAMETER` on some drivers.
-  2.44.0-2 is no longer available in the Ubuntu 24.04 archive, so this build
-  uses the current system version. If you hit rendering glitches, run it with
-  `WEBKIT_DISABLE_COMPOSITING_MODE=1 ./Sigma-File-Manager-*.AppImage`
-  (the workaround documented in upstream's `CONTRIBUTING.md`).
+  That version is no longer in the Ubuntu archives; this build uses the
+  current 22.04 package (WebKitGTK 2.50.4).
+- The AppImage ships an isolated Mesa llvmpipe closure
+  (`usr/lib/sfm-softgl/`) that the launcher falls back to automatically when
+  the host exposes no usable GL driver at all. `SFM_GL=software` forces it,
+  `SFM_GL=hardware` disables the fallback, `SFM_DEBUG=1` explains the choice.
+- The launcher clears session-injected `GTK_MODULES` / `GTK3_MODULES` and sets
+  `NO_AT_BRIDGE=1` so that host GTK modules are never loaded into the bundled
+  GTK. `SFM_KEEP_GTK_MODULES=1` / `SFM_KEEP_AT_BRIDGE=1` opt out.
+- Full rationale, the measured ABI audit, what was deliberately *not* copied
+  from the reference post-mortem, and the verification gates:
+  [`docs/APPIMAGE-HARDENING.md`](docs/APPIMAGE-HARDENING.md).
+
+### Supported range
+
+**glibc 2.35 or newer.** UOS Desktop 20 / Deepin 20.8 (glibc 2.28) are *not*
+supported by this AppImage and cannot be, because a bundled private loader
+requires a fixed install root — see §3.1 of the hardening document.
 
 ## License
 
