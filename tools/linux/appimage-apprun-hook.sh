@@ -70,29 +70,43 @@ fi
 # isolated, fixed-version Mesa software-rendering closure in
 # usr/lib/sfm-softgl and switches to it.
 # ---------------------------------------------------------------------------
-sfm_host_gl_usable() {
-    # A DRM node means the kernel exposed a GPU; assume the host driver works.
-    if [ -d /dev/dri ]; then
-        sfm_debug "host GL: /dev/dri present -> hardware"
-        return 0
-    fi
-
-    # No GPU node: the host needs a software rasteriser of its own.
-    for d in /usr/lib/x86_64-linux-gnu/dri /usr/lib64/dri /usr/lib/dri; do
-        for drv in swrast_dri.so kms_swrast_dri.so; do
-            if [ -e "$d/$drv" ]; then
-                sfm_debug "host GL: found $d/$drv -> hardware+llvmpipe"
-                return 0
-            fi
-        done
+sfm_egl_vendor_manifest() {
+    for d in /usr/share/glvnd/egl_vendor.d \
+             /usr/local/share/glvnd/egl_vendor.d \
+             /etc/glvnd/egl_vendor.d; do
+        if [ -d "$d" ] && ls "$d"/*.json >/dev/null 2>&1; then
+            return 0
+        fi
     done
+    return 1
+}
 
-    if [ -e /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then
-        sfm_debug "host GL: mesa EGL vendor manifest present -> hardware"
+sfm_host_gl_usable() {
+    # A DRM node means the kernel exposed a GPU and a driver claimed it.
+    if [ -d /dev/dri ]; then
+        if sfm_egl_vendor_manifest; then
+            sfm_debug "host GL: /dev/dri + EGL vendor manifest -> hardware"
+        else
+            # GPU node but nothing to drive EGL through: this is the
+            # "unsupported / proprietary driver" shape.  Stay on hardware but
+            # apply upstream's documented mitigation, and leave SFM_GL=software
+            # as the escape hatch when even that is not enough.
+            export WEBKIT_DISABLE_COMPOSITING_MODE=1
+            sfm_debug "host GL: /dev/dri without an EGL vendor manifest -> hardware, WebKit compositing disabled"
+        fi
         return 0
     fi
 
-    sfm_debug "host GL: no DRI node and no Mesa rasteriser -> software fallback"
+    # No GPU node.  What matters for EGL is a GLVND vendor manifest: the
+    # dispatcher is useless without one.  A DRI driver on its own is NOT
+    # enough — a host with swrast_dri.so but no vendor manifest still dies
+    # with "Could not create default EGL display: EGL_BAD_PARAMETER".
+    if sfm_egl_vendor_manifest; then
+        sfm_debug "host GL: EGL vendor manifest present -> hardware"
+        return 0
+    fi
+
+    sfm_debug "host GL: no DRI node and no EGL vendor manifest -> software fallback"
     return 1
 }
 
@@ -124,11 +138,18 @@ sfm_enable_software_gl() {
 case "${SFM_GL:-auto}" in
     software)
         sfm_enable_software_gl
+        export SFM_GL_ACTIVE=software
         ;;
     hardware)
         sfm_debug "SFM_GL=hardware: leaving the host GL stack alone"
+        export SFM_GL_ACTIVE=hardware
         ;;
     *)
-        sfm_host_gl_usable || sfm_enable_software_gl
+        if sfm_host_gl_usable; then
+            export SFM_GL_ACTIVE=hardware
+        else
+            sfm_enable_software_gl
+            export SFM_GL_ACTIVE=software
+        fi
         ;;
 esac

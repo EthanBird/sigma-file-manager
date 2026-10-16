@@ -241,9 +241,64 @@ docker run --rm -v /tmp/out:/out sfm-uos-build:22.04 \
 
 ---
 
-## 6. 适用边界（必须如实声明）
+## 6. 本次实测结果
+
+| 项目 | `-zh.1`（Ubuntu 24.04 构建） | `-zh.2`（Ubuntu 22.04 构建） |
+| --- | --- | --- |
+| 主程序最高 `GLIBC_` 需求 | 2.39 | **2.35** |
+| `libwebkit2gtk-4.1` 需求 | 2.38 | 2.35 |
+| 文件系统内 ELF 数 | 197 | 235（含软渲染闭包） |
+| 自带库 | 168 | 173 + 33（`sfm-softgl`） |
+| AppImage 体积 | 92.4 MB | 142.3 MB |
+| 可运行于 | Ubuntu 24.04+ / Debian 13+ | **Ubuntu 22.04+ / Debian 12+** |
+
+新增的 50 MB 主要是 Mesa 的 llvmpipe 闭包（`swrast_dri.so` 32.6 MB + `libLLVM-15.so.1` 116.8 MB，
+squashfs 压缩后约 42 MB）。它只在软件回退路径上生效。若要砍掉这段体积，
+删掉 `usr/lib/sfm-softgl` 即可让启动器退回"只用宿主 GL"的行为——
+代价是没有 GL 驱动的机器会白屏。
+
+门禁四个场景全部通过：
+
+```
+auto               17/17   （无 GPU、无 EGL vendor manifest → 自动用自带软渲染）
+forced-software    17/17
+forced-hardware    15/15   （只断言选择逻辑）
+auto-gpu-node      16/16   （假 /dev/dri → 选硬件 + 关 WebKit compositing）
+```
+
+`auto` 场景的关键读数：
+`distinct_colors=17962`、`grey_stddev=25.77`、文本框深色像素比 `0.9535`；
+第一次真实点击内容区签名移动 `0.0408`，第二次点击再移动 `0.0176`（基线噪声实测为 `0.00000`）。
+
+---
+
+## 7. 门禁抓到的真实缺陷
+
+这一节是本流程最有价值的部分：下面每一条都是**门禁跑出来的**，不是推理出来的。
+静态检查和"进程活着"都会漏掉它们。
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| `sigma-file-manager: error while loading shared libraries: libgbm.so.1` —— 连 `main()` 都到不了 | Tauri/linuxdeploy 把 libgbm/libdrm/libEGL 排除在包外，交给宿主；最小系统上不存在。`ldd` 在干净容器里恰好报两个：`libgbm.so.1`、`libEGL.so.1` | `promote-runtime-libs.py` 把加载期必需的 GL/GBM 库从闭包提升进 `usr/lib`（`RUNPATH=$ORIGIN` 可达）；厂商驱动 `libEGL_mesa` 仍只留在 `sfm-softgl`，硬件加速照旧走宿主的 vendor manifest |
+| `Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...`（宿主有 `swrast_dri.so` 却没有 vendor manifest） | 自动判定把"存在 DRI 驱动"当成"EGL 可用"。**DRI 驱动 ≠ EGL 可用**：GLVND 需要 vendor manifest 才能派发 | 判定改为只看 `/dev/dri` 与 GLVND vendor manifest，删掉了那条错误启发式 |
+| `Couldn't open libGLESv2.so.2`（软渲染路径） | 闭包只收了 EGL/GL，漏了 WebKit 会直接 `dlopen` 的 GLES | 闭包根加入 `libGLESv2.so.2`、`libGLESv1_CM.so.1` |
+| 容器里 `failed to run linuxdeploy` | Tauri bundler 在无 FUSE 容器内的调用方式问题——**同一条 linuxdeploy 命令手动执行却成功**（rc=0） | 不纠缠：`finish-bundle.sh` 用同一套 linuxdeploy + gtk 插件接手该步骤，产物等价 |
+| `/usr/bin/xdg-open: No such file or directory` | 22.04 基础镜像没装 `xdg-utils`，而 Tauri 的 Linux bundler 必须把 `/usr/bin/xdg-open` 塞进包 | 构建镜像与构建脚本都安装 `xdg-utils` |
+| 门禁"进程存活 20 秒"就通过 | 旧式门禁看不到 EGL 白屏，也看不到输入冻结 | 门禁改为读 `/proc/<pid>/environ`（活性）、像素指标、两次真实 X11 点击 |
+| 门禁"截图变了就算输入生效" | 页面重绘、首次点击让窗口脱离 GTK `:backdrop`、基线未稳定，都会造成假阳性 | 基线用整屏像素签名判稳（实测噪声 `0.00000`）后才开始测量；指针先停到中性位再截图（GTK 悬停高亮会污染区域）；点击目标改为内容区并要求**两次独立点击各自产生不同状态** |
+| 门禁容器里中文渲染成豆腐块 | 最小镜像没有 CJK 字体——与参考手册 §11 的 `font_available=0` 完全同源 | 门禁镜像装 `fonts-noto-cjk`，记录 `fc-match sans-serif:lang=zh-cn`，并在 CJK 场景下断言文本带深色像素比 |
+
+其中前三条是**真实的、会导致不可用的缺陷**，全部由门禁发现。
+
+---
+
+## 8. 适用边界（必须如实声明）
 
 - 本 AppImage 的 ABI 下限是 **glibc 2.35**（由构建基线决定）。
+- 还要求 **`libstdc++` ≥ GCC 12**：实测最高需求为 `GLIBCXX_3.4.30`
+  （来自 `libjavascriptcoregtk-4.1`），软渲染闭包里的 `libLLVM-15` 还要 `CXXABI_1.3.13`。
+  Ubuntu 22.04 与 Debian 12 都满足；`glibc` 够新但 `libstdc++` 停留在 GCC 11
+  （如 RHEL 9）的系统会在加载期失败。这正是参考手册强调 C++ ABI 时代的原因。
 - **UOS Desktop 20 / Deepin 20.8（glibc 2.28）不在支持范围内。** 见 §3.1：
   要覆盖它们必须走固定安装根的 deb + 私有 glibc 运行层，而不是 AppImage。
 - 容器门禁证明的是"在 glibc 2.35 用户态、没有系统 WebKitGTK、没有 GPU 的环境下

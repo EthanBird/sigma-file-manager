@@ -1,0 +1,17 @@
+# Gate image: minimum supported userland with a GUI test rig but deliberately
+# WITHOUT libwebkit2gtk-4.1 — so a green gate proves the AppImage carries its
+# own desktop runtime.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb xauth xdotool x11-apps imagemagick dbus-x11 \
+        fontconfig fonts-noto-cjk fonts-dejavu-core \
+        python3 python3-pil procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# no libwebkit2gtk-4.1-0, no libgl1-mesa-dri: the AppImage must supply its own
+RUN dpkg-query -W libwebkit2gtk-4.1-0 2>/dev/null && exit 1 || true
+
+WORKDIR /gate

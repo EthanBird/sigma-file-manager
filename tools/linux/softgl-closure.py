@@ -35,6 +35,9 @@ SKIP = re.compile(
 
 GLVND = ['libEGL.so.1', 'libGL.so.1', 'libGLX.so.0', 'libGLdispatch.so.0',
          'libOpenGL.so.0']
+# WebKit dlopens GLES directly; without these the software path aborts with
+# "Couldn't open libGLESv2.so.2"
+GLES = ['libGLESv2.so.2', 'libGLESv1_CM.so.1']
 GBM = ['libgbm.so.1', 'libdrm.so.2']
 MESA_EGL = ['libEGL_mesa.so.0']
 DRI = ['swrast_dri.so', 'kms_swrast_dri.so']
@@ -42,7 +45,8 @@ VENDOR_JSON = '/usr/share/glvnd/egl_vendor.d/50_mesa.json'
 
 
 def ldconfig_map():
-    out = subprocess.run(['ldconfig', '-p'], capture_output=True, text=True).stdout
+    ldconfig = shutil.which('ldconfig') or '/sbin/ldconfig'
+    out = subprocess.run([ldconfig, '-p'], capture_output=True, text=True).stdout
     m = {}
     for line in out.splitlines():
         if '=>' not in line:
@@ -97,7 +101,7 @@ def main():
     dridir = os.path.join(libdir, 'dri')
     os.makedirs(dridir)
 
-    roots = GLVND + GBM + MESA_EGL
+    roots = GLVND + GLES + GBM + MESA_EGL
     seen, queue, copied = set(), list(roots), []
     for d in DRI:
         p = os.path.join(SYS_LIB_DIRS[0], 'dri', d)

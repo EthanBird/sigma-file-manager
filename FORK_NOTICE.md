@@ -64,9 +64,19 @@ Built locally by the fork owner, **not** by the upstream project's CI.
 
 ### Supported range
 
-**glibc 2.35 or newer.** UOS Desktop 20 / Deepin 20.8 (glibc 2.28) are *not*
-supported by this AppImage and cannot be, because a bundled private loader
-requires a fixed install root — see §3.1 of the hardening document.
+**glibc 2.35 or newer, with libstdc++ from GCC 12 or newer**
+(the bundle needs `GLIBCXX_3.4.30`). Ubuntu 22.04+/Debian 12+ satisfy both.
+
+UOS Desktop 20 / Deepin 20.8 (glibc 2.28) are *not* supported by this AppImage
+and cannot be, because a bundled private loader requires a fixed install root
+— see §3.1 of the hardening document.
+
+Gate status: all four headless scenarios pass on this build
+(`auto` 17/17, `forced-software` 17/17, `forced-hardware` 15/15,
+`auto-gpu-node` 16/16). Three real, show-stopping defects were found and fixed
+by the gate — a missing `libgbm.so.1`/`libEGL.so.1`, a wrong GL
+auto-detection heuristic, and a missing `libGLESv2.so.2` in the software
+closure. See §7 of `docs/APPIMAGE-HARDENING.md`.
 
 ## License
 
