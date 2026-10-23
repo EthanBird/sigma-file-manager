@@ -64,19 +64,27 @@ Built locally by the fork owner, **not** by the upstream project's CI.
 
 ### Supported range
 
-**glibc 2.35 or newer, with libstdc++ from GCC 12 or newer**
-(the bundle needs `GLIBCXX_3.4.30`). Ubuntu 22.04+/Debian 12+ satisfy both.
+1. **AppImage (`Sigma-File-Manager-2.2.1-zh.2-linux.AppImage`)**:
+   **glibc 2.35 or newer, with libstdc++ from GCC 12 or newer**
+   (the bundle needs `GLIBCXX_3.4.30`). Ubuntu 22.04+/Debian 12+ satisfy both.
+2. **UOS Desktop 20 / Deepin 20.8 `.deb` (`Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb`)**:
+   **glibc 2.28 or newer** (tested on UOS Desktop 20 Professional 1070, kernel
+   `4.19.0-amd64-desktop`, `glibc 2.28`). Installs into the fixed root
+   `/opt/sigma-file-manager-uos20` with a self-contained Ubuntu 22.04
+   (`glibc 2.35` / `GLIBCXX_3.4.30`) runtime closure, transitive `DT_RPATH`
+   (no `LD_LIBRARY_PATH` exported into host child processes), `GIO_MODULE_DIR`
+   confinement, and isolated Mesa `llvmpipe` software rendering — see §9 of
+   `docs/APPIMAGE-HARDENING.md`.
 
-UOS Desktop 20 / Deepin 20.8 (glibc 2.28) are *not* supported by this AppImage
-and cannot be, because a bundled private loader requires a fixed install root
-— see §3.1 of the hardening document.
-
-Gate status: all four headless scenarios pass on this build
-(`auto` 17/17, `forced-software` 17/17, `forced-hardware` 15/15,
-`auto-gpu-node` 16/16). Three real, show-stopping defects were found and fixed
-by the gate — a missing `libgbm.so.1`/`libEGL.so.1`, a wrong GL
-auto-detection heuristic, and a missing `libGLESv2.so.2` in the software
-closure. See §7 of `docs/APPIMAGE-HARDENING.md`.
+Gate status:
+- Headless Ubuntu 22.04 AppImage gate: all four scenarios pass
+  (`auto` 17/17, `forced-software` 17/17, `forced-hardware` 15/15,
+  `auto-gpu-node` 16/16).
+- Live UOS Desktop 20 (1070) `.deb` gate (`tools/linux/gate-uos20-deb.py`):
+  **13/13 checks pass** on a real UOS 20 VM (`glibc 2.28`, zero host `.so` mapped
+  into `WebKitWebProcess`, zero child-process segfaults in `dmesg`, verified
+  Chinese rendering and multi-step X11 navigation). See §7 and §9 of
+  `docs/APPIMAGE-HARDENING.md`.
 
 ## License
 

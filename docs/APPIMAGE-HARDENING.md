@@ -299,10 +299,70 @@ auto-gpu-node      16/16   （假 /dev/dri → 选硬件 + 关 WebKit compositin
   （来自 `libjavascriptcoregtk-4.1`），软渲染闭包里的 `libLLVM-15` 还要 `CXXABI_1.3.13`。
   Ubuntu 22.04 与 Debian 12 都满足；`glibc` 够新但 `libstdc++` 停留在 GCC 11
   （如 RHEL 9）的系统会在加载期失败。这正是参考手册强调 C++ ABI 时代的原因。
-- **UOS Desktop 20 / Deepin 20.8（glibc 2.28）不在支持范围内。** 见 §3.1：
-  要覆盖它们必须走固定安装根的 deb + 私有 glibc 运行层，而不是 AppImage。
+- **UOS Desktop 20 / Deepin 20.8（glibc 2.28）无法由单文件 AppImage 支持**（见 §3.1），
+  但已由配套的**固定安装根 `.deb` + 私有 glibc 2.35 运行层**（见 §9）完整覆盖并在 UOS 20 真机通过门禁。
 - 容器门禁证明的是"在 glibc 2.35 用户态、没有系统 WebKitGTK、没有 GPU 的环境下
   能安装、能渲染、能响应真实输入"。它**不能**替代在真实 UOS 20 / kernel 4.19 /
   DDE / 实际显卡上的人工回归。
 - 每次升级 Rust、Tauri、WebKitGTK、GTK、GStreamer、Mesa 闭包或构建基线，
   都必须重跑静态审计与三场景门禁。
+
+---
+
+## 9. UOS Desktop 20（glibc 2.28）固定安装根 `.deb` 与真机门禁验证
+
+为覆盖 **统信 UOS Desktop 20 Professional (1070) / Deepin 20.8（glibc 2.28、GLIBCXX_3.4.25、Linux 4.19）**，
+本仓库新增 `tools/linux/build-uos20-deb.py` 与真机门禁 `tools/linux/gate-uos20-deb.py`，
+将硬化后的 `v2.2.1-zh.2` AppImage 重打包为固定安装根 `/opt/sigma-file-manager-uos20` 的 Debian 软件包
+`Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb`（包版本 `2.2.1-zh.2+uos20.1`）。
+
+### 9.1 固定安装根 `.deb` 架构设计
+
+1. **私有 `glibc 2.35` + 传递闭包目录（`/opt/sigma-file-manager-uos20/uos-runtime`）**：
+   - 从 Ubuntu 22.04（`glibc 2.35`）构建机收集 13 个 glibc 核心对象（`ld-linux-x86-64.so.2`、`libc.so.6`、`libm.so.6`、`libdl.so.2`、`libpthread.so.0`、`librt.so.1`、`libresolv.so.2`、`libutil.so.1`、`libanl.so.1`、`libBrokenLocale.so.1`、`libnss_files.so.2`、`libnss_dns.so.2`、`libnss_compat.so.2`）、C++ 运行时（`libstdc++.so.6`、`libgcc_s.so.1`），以及 AppDir 内未自带但由 `DT_NEEDED` 引用的 8 个用户态库（`libharfbuzz.so.0`、`libfontconfig.so.1`、`libfreetype.so.6`、`libfribidi.so.0`、`libgmp.so.10`、`libcom_err.so.2`、`libgpg-error.so.0`、`libgraphite2.so.3`），共 **23 个运行时对象**。
+   - 构建期静态审计断言包内全部 ELF 的 `DT_NEEDED` 100% 在包内闭环解析（0 个外部缺口）。
+2. **`patchelf >= 0.14` 改写固定 `PT_INTERP` 与传递型 `DT_RPATH`**：
+   - 对 4 个带解释器的可执行文件（`AppRun.wrapped`、`usr/bin/sigma-file-manager`、`WebKitNetworkProcess`、`WebKitWebProcess`）将 `PT_INTERP` 设为 `/opt/sigma-file-manager-uos20/uos-runtime/ld-linux-x86-64.so.2`。
+   - 对除 glibc 核心对象外的全部 **222 个 ELF** 执行 `patchelf --force-rpath --set-rpath /opt/sigma-file-manager-uos20/uos-runtime:/opt/sigma-file-manager-uos20/usr/lib:/opt/sigma-file-manager-uos20/usr/lib/sfm-softgl`，将非传递的 `DT_RUNPATH` 转为传递型 `DT_RPATH`，并在每个文件改写前后比对 `DT_NEEDED` 列表防止损坏。
+3. **彻底零 `LD_LIBRARY_PATH`（避免宿主子进程崩溃）**：
+   - 由于传递型 `DT_RPATH` 已覆盖主进程、WebKit 辅助进程及 `dlopen` 的 `swrast_dri.so`，启动器 `/usr/bin/sigma-file-manager` **显式 `unset LD_LIBRARY_PATH`**，并移除包内自带的 Ubuntu 22.04 `usr/bin/xdg-open` 脚本。
+   - 这样应用在启动或运行期调用 `xdg-open`、`which`、`gsettings`、`kreadconfig5` 或打开系统终端时，宿主 `glibc 2.28` 子进程完全不会被私有 `glibc 2.35` 污染。
+4. **`GIO_MODULE_DIR` 严格隔离宿主 GIO 模块**：
+   - 仅设 `GIO_EXTRA_MODULES` 仍会让 GLib 默认扫描宿主的 `/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so`（基于 UOS 20 旧版 GLib 编译）。启动器显式设置 `GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"`，彻底阻断宿主 `gvfs` 模块混入。
+5. **UOS 20 默认启用隔离软件渲染（`SFM_GL=software`）**：
+   - 在 UOS 20（含 VMware `vmwgfx` 虚拟显卡环境）下，虽然 `/dev/dri` 与宿主 `50_mesa.json` 存在，但宿主 Mesa/DRI 驱动与包内 WebKitGTK 2.50.4 / GBM ABI 不兼容。UOS 20 启动器默认启用 `SFM_GL=software`（走包内 `usr/lib/sfm-softgl` 的 Mesa `llvmpipe`），可通过 `SFM_GL=hardware` 显式覆盖。
+
+### 9.2 在 UOS Desktop 20 (1070) 真机抓到的 5 个真实问题
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| 直接运行 `-zh.2` AppImage 报 `GLIBC_2.29`..`2.35` / `GLIBCXX_3.4.30` not found | AppImage 随机挂载点无法固定 `PT_INTERP`，`WebKitNetworkProcess`/`WebKitWebProcess` 由内核按 `/lib64/ld-linux-x86-64.so.2`（宿主 glibc 2.28）启动 | `build-uos20-deb.py` 采用固定根 `/opt/sigma-file-manager-uos20` + 私有 `glibc 2.35` 加载器 |
+| 在 UOS 20 上用系统自带 `patchelf 0.10` 改写二进制后报 `libwebkit2gtk-4.1.so.0: cannot open shared object file` 或 `swrast_dri.so` 段错误 | `patchelf 0.10` 改写已被 `linuxdeploy` 处理过的 ELF 时存在已知 bug，会丢弃 `.dynamic` 中的 `RUNPATH` 和前两个 `DT_NEEDED`（`liblzma.so.5`、`libgio-2.0.so.0`）并损坏 TLS 表 | 构建脚本强制校验 `patchelf >= 0.14`（实测 `0.14.3`），并在每次 `patchelf` 前后断言 `DT_NEEDED` 完全一致 |
+| `dmesg` 出现 `gsettings`、`which`、`kreadconfig5` 在 `libc.so.6` / `ld-2.28.so` 中段错误 | 若通过 `LD_LIBRARY_PATH` 暴露私有 `glibc 2.35` 目录，应用启动时调用 `xdg-open` 派生的宿主 `glibc 2.28` 工具链会加载 `glibc 2.35` 的 `libc.so.6` 崩溃 | 全量改用传递型 `DT_RPATH`，启动器 `unset LD_LIBRARY_PATH`，并删除包内 `usr/bin/xdg-open` 回退给宿主 |
+| `/proc/<pid>/maps` 中混入宿主 `/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so` | `linuxdeploy-plugin-gtk.sh` 只设了追加型的 `GIO_EXTRA_MODULES`，未覆盖默认模块目录 | 启动器显式设置 `GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"` |
+| VMware UOS 20 虚拟机下 `SFM_GL=auto` 选 `hardware` 导致 `libEGL fatal: did not find extension DRI_Mesa version 1` | VMware 暴露了 `/dev/dri` 与宿主 `50_mesa.json`，但 UOS 20 宿主旧版 `vmwgfx_dri.so` 与包内新 `libgbm`/`libEGL` 不兼容 | UOS 20 专用启动器默认 `SFM_GL=software` 走包内 `sfm-softgl` |
+
+### 9.3 复现构建与真机门禁
+
+```bash
+# 1) 在 Ubuntu 22.04 (glibc 2.35, patchelf >= 0.14) 环境构建 UOS 20 .deb
+python3 tools/linux/build-uos20-deb.py \
+    --appimage Sigma-File-Manager-2.2.1-zh.2-linux.AppImage \
+    --out Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb \
+    --pkg-version 2.2.1-zh.2+uos20.1
+
+# 2) 在 UOS Desktop 20 (1070, glibc 2.28) 真机安装并运行 13 项门禁
+sudo dpkg -i Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb
+python3 tools/linux/gate-uos20-deb.py --outdir /tmp/uos20-gate-out
+```
+
+UOS Desktop 20 Professional (1070, `4.19.0-amd64-desktop`, `glibc 2.28`) **13/13 项真机门禁全部通过**：
+- `host_abi_is_glibc_2_28`: `glibc 2.28`
+- `deb_installed`: `install ok installed 2.2.1-zh.2+uos20.1`
+- `runtime_manifest_present`: `patchedElfCount=222, runtimeObjects=23`
+- `window_created` & `webkit_processes_alive`: 主窗口（`1280x720`）、`WebKitNetworkProcess`、`WebKitWebProcess` 全部存活
+- `ld_library_path_unset`: `LD_LIBRARY_PATH=<unset>`（`dmesg` 零子进程段错误）
+- `gtk_modules_cleared` & `gio_module_dir_confined` & `webkit_zero_host_so`: `WebKitWebProcess` 映射宿主 `.so` 数量为 **0**，主进程无 `libgvfsdbus.so` 泄漏
+- `renders_content`: `distinct_colors=45875, grey_stddev=23.5755`
+- `x11_click_1_navigator` (`delta=0.0946`) & `x11_click_2_settings` (`delta=0.0873`): 两次真实 X11 点击分别切换至「导航器」与「设置」页
+- `no_gl_or_loader_errors_in_log`: `offending=[]`
