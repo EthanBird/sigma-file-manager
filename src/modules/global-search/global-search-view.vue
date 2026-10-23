@@ -279,6 +279,9 @@ watch(() => globalSearchStore.isOpen, async (isOpen) => {
   if (isOpen) {
     showOptions.value = true;
     await globalSearchStore.refreshStatus();
+    if (globalSearchStore.needsScan && !globalSearchStore.isScanInProgress) {
+      void globalSearchStore.startScan('startup');
+    }
     globalSearchStore.startStatusPolling();
     focusInput();
   }
@@ -323,7 +326,6 @@ onMounted(() => {
           :model-value="globalSearchStore.query"
           :placeholder="t('globalSearch.globalSearch')"
           class="global-search-view__input"
-          :disabled="!hasIndexData && globalSearchStore.scanPhase === 'idle'"
           @update:model-value="globalSearchStore.setQuery(String($event ?? ''))"
         />
         <Button

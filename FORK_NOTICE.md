@@ -81,9 +81,11 @@ Gate status:
   (`auto` 17/17, `forced-software` 17/17, `forced-hardware` 15/15,
   `auto-gpu-node` 16/16).
 - Live UOS Desktop 20 (1070) `.deb` gate (`tools/linux/gate-uos20-deb.py`):
-  **13/13 checks pass** on a real UOS 20 VM (`glibc 2.28`, zero host `.so` mapped
-  into `WebKitWebProcess`, zero child-process segfaults in `dmesg`, verified
-  Chinese rendering and multi-step X11 navigation). See §7 and §9 of
+  **19/19 checks pass** on a real UOS 20 VM (`glibc 2.28`, zero host `.so` mapped
+  into `WebKitWebProcess`, zero child-process segfaults in `dmesg`, default DDE
+  `GTK_IM_MODULE=gtk-im-context-simple` + `GDK_CORE_DEVICE_EVENTS=1` input
+  isolation, verified Quick Search input, Global Search startup indexing & query,
+  and Language / Theme `BaseCombobox` dropdowns). See §7 and §9 of
   `docs/APPIMAGE-HARDENING.md`.
 
 ## License

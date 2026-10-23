@@ -314,7 +314,7 @@ auto-gpu-node      16/16   （假 /dev/dri → 选硬件 + 关 WebKit compositin
 为覆盖 **统信 UOS Desktop 20 Professional (1070) / Deepin 20.8（glibc 2.28、GLIBCXX_3.4.25、Linux 4.19）**，
 本仓库新增 `tools/linux/build-uos20-deb.py` 与真机门禁 `tools/linux/gate-uos20-deb.py`，
 将硬化后的 `v2.2.1-zh.2` AppImage 重打包为固定安装根 `/opt/sigma-file-manager-uos20` 的 Debian 软件包
-`Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb`（包版本 `2.2.1-zh.2+uos20.1`）。
+`Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb`（包版本 `2.2.1-zh.2+uos20.2`）。
 
 ### 9.1 固定安装根 `.deb` 架构设计
 
@@ -327,12 +327,17 @@ auto-gpu-node      16/16   （假 /dev/dri → 选硬件 + 关 WebKit compositin
 3. **彻底零 `LD_LIBRARY_PATH`（避免宿主子进程崩溃）**：
    - 由于传递型 `DT_RPATH` 已覆盖主进程、WebKit 辅助进程及 `dlopen` 的 `swrast_dri.so`，启动器 `/usr/bin/sigma-file-manager` **显式 `unset LD_LIBRARY_PATH`**，并移除包内自带的 Ubuntu 22.04 `usr/bin/xdg-open` 脚本。
    - 这样应用在启动或运行期调用 `xdg-open`、`which`、`gsettings`、`kreadconfig5` 或打开系统终端时，宿主 `glibc 2.28` 子进程完全不会被私有 `glibc 2.35` 污染。
-4. **`GIO_MODULE_DIR` 严格隔离宿主 GIO 模块**：
-   - 仅设 `GIO_EXTRA_MODULES` 仍会让 GLib 默认扫描宿主的 `/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so`（基于 UOS 20 旧版 GLib 编译）。启动器显式设置 `GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"`，彻底阻断宿主 `gvfs` 模块混入。
-5. **UOS 20 默认启用隔离软件渲染（`SFM_GL=software`）**：
-   - 在 UOS 20（含 VMware `vmwgfx` 虚拟显卡环境）下，虽然 `/dev/dri` 与宿主 `50_mesa.json` 存在，但宿主 Mesa/DRI 驱动与包内 WebKitGTK 2.50.4 / GBM ABI 不兼容。UOS 20 启动器默认启用 `SFM_GL=software`（走包内 `usr/lib/sfm-softgl` 的 Mesa `llvmpipe`），可通过 `SFM_GL=hardware` 显式覆盖。
+4. **默认开启完整 DDE 输入与 IM 隔离（解决点击 Quick Search / 语言切换 / 主题切换死锁）**：
+   - 在 UOS 20 DDE 会话下，宿主环境默认注入 `GTK_IM_MODULE=fcitx`、`XMODIFIERS=@im=fcitx`、`QT_IM_MODULE=fcitx` 及 XInput2。普通目录点击与左侧导航栏切换不聚焦 `<input>` 因此看似正常；但**一旦点击 Quick Search、设置页语言切换（`BaseCombobox` 自动聚焦内部搜索 `<input>`）、主题切换（`BaseCombobox`）或全局搜索输入框**，包内 Ubuntu 22.04 的 GTK 3 / WebKitGTK 会立即激活 `GtkIMContext` 连接宿主 `fcitx`/搜狗输入法，跨两代 GTK/GLib 用户态导致 WebKitGTK 输入循环瞬间死锁（弹窗无法绘出、整窗按钮全部失灵）。
+   - UOS 20 启动器因此**默认开启 `SFM_ISOLATED_INPUT=1`**（`unset XMODIFIERS QT_IM_MODULE SDL_IM_MODULE CLUTTER_IM_MODULE`、`export GTK_IM_MODULE=gtk-im-context-simple`、`export GDK_CORE_DEVICE_EVENTS=1`）；AppImage 启动钩子 `appimage-apprun-hook.sh` 也在检测到 `Deepin`/`UOS`/`fcitx` 会话时自动启用该隔离。
+5. **修复 `quick-view` 预启动辅助窗口与全局搜索启动索引的竞态（解决全局搜索被禁用无法输入）**：
+   - 应用默认开启 `performance.prelaunchQuickViewWindow: true`。主窗口启动时调用 `global_search_init` 并启动 `startup` 索引扫描（创建 `.index.staging.*` 目录写入 Tantivy 段文件，耗时约 3 秒）；1 秒后预启动的 `quick-view` 辅助窗口加载 `App.vue` 同样执行了未加 `isMainWindow` 守卫的 `useInit()` -> `global_search_init()`。
+   - Rust 端 `global_search_init()` 原先未检查 `is_scan_in_progress` 就无条件执行 `cleanup_orphan_index_dirs(&base_dir)`，直接把主窗口正在写入的 `.index.staging.*` 删空并把 `scan_phase` 重置为 `Idle`，导致启动索引必败（`FileDoesNotExist(".../.index.staging.../....fieldnorm")`），`indexed_item_count` 保持为 `0`，进而触发 `global-search-view.vue` 的 `:disabled="!hasIndexData && globalSearchStore.scanPhase === 'idle'"` 将全局搜索输入框永久禁用并显示「搜索数据不完整 / 未选择驱动器」。
+   - 修复：`src-tauri/src/global_search/scan.rs` 的 `global_search_init()` 在扫描进行中或索引已初始化时直接返回当前状态；`src/composables/use-init.ts` 将 `globalSearch.initOnLaunch` 等后台初始化限制在 `isMainWindow`；`global-search-view.vue` 移除输入框的 `:disabled` 锁死并在打开面板且无索引时自动触发扫描。
+6. **`GIO_MODULE_DIR` 严格隔离宿主 GIO 模块 + 默认启用 `SFM_GL=software`**：
+   - 显式设置 `GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"` 阻断宿主 `libgvfsdbus.so` 混入；默认启用 `SFM_GL=software` 走包内 `usr/lib/sfm-softgl` 的 Mesa `llvmpipe`。
 
-### 9.2 在 UOS Desktop 20 (1070) 真机抓到的 5 个真实问题
+### 9.2 在 UOS Desktop 20 (1070) 真机抓到的 7 个真实问题
 
 | 现象 | 根因 | 修复 |
 | --- | --- | --- |
@@ -341,28 +346,40 @@ auto-gpu-node      16/16   （假 /dev/dri → 选硬件 + 关 WebKit compositin
 | `dmesg` 出现 `gsettings`、`which`、`kreadconfig5` 在 `libc.so.6` / `ld-2.28.so` 中段错误 | 若通过 `LD_LIBRARY_PATH` 暴露私有 `glibc 2.35` 目录，应用启动时调用 `xdg-open` 派生的宿主 `glibc 2.28` 工具链会加载 `glibc 2.35` 的 `libc.so.6` 崩溃 | 全量改用传递型 `DT_RPATH`，启动器 `unset LD_LIBRARY_PATH`，并删除包内 `usr/bin/xdg-open` 回退给宿主 |
 | `/proc/<pid>/maps` 中混入宿主 `/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so` | `linuxdeploy-plugin-gtk.sh` 只设了追加型的 `GIO_EXTRA_MODULES`，未覆盖默认模块目录 | 启动器显式设置 `GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"` |
 | VMware UOS 20 虚拟机下 `SFM_GL=auto` 选 `hardware` 导致 `libEGL fatal: did not find extension DRI_Mesa version 1` | VMware 暴露了 `/dev/dri` 与宿主 `50_mesa.json`，但 UOS 20 宿主旧版 `vmwgfx_dri.so` 与包内新 `libgbm`/`libEGL` 不兼容 | UOS 20 专用启动器默认 `SFM_GL=software` 走包内 `sfm-softgl` |
+| **点击 Quick Search、设置里语言切换、主题切换立即卡死**（打开目录和切换左栏菜单却正常） | `BaseCombobox`（语言/主题切换）与 Quick Search 打开时都会自动 `.focus()` 内部 `<input>`；UOS 20 DDE 会话注入的 `GTK_IM_MODULE=fcitx` / `XMODIFIERS=@im=fcitx` 在首次聚焦 `<input>` 时跨用户态激活输入法桥接，阻塞 WebKitGTK 输入循环 | UOS 20 启动器默认启用 `SFM_ISOLATED_INPUT=1`（`GTK_IM_MODULE=gtk-im-context-simple`、`GDK_CORE_DEVICE_EVENTS=1` 并清除 `XMODIFIERS`/`*_IM_MODULE`） |
+| **全局搜索输入框呈禁用态（`disabled`）无法输入**，提示「搜索数据不完整 / 未选择驱动器」 | 预启动的 `quick-view` 辅助窗口同样执行了 `useInit()` -> `global_search_init()`，而 `global_search_init()` 无条件执行 `cleanup_orphan_index_dirs` 删掉了主窗口正在写入的 `.index.staging.*`，导致首次启动索引必败（`indexed_item_count=0`）并触发 `<Input :disabled="!hasIndexData && scanPhase === 'idle'">` | `global_search_init` 增加 `is_scan_in_progress || index.is_some()` 守卫、`use-init.ts` 限制仅 `isMainWindow` 初始化后台全局搜索、`global-search-view.vue` 移除输入框 `:disabled` 锁死 |
 
 ### 9.3 复现构建与真机门禁
 
 ```bash
-# 1) 在 Ubuntu 22.04 (glibc 2.35, patchelf >= 0.14) 环境构建 UOS 20 .deb
+# 1) 在 Ubuntu 22.04 (glibc 2.35, patchelf >= 0.14) 环境构建前端、Rust 主程序与 UOS 20 .deb
+npm ci --ignore-scripts
+npm run build-only
+npx tauri build --no-bundle --config '{"build":{"beforeBuildCommand":""}}'
 python3 tools/linux/build-uos20-deb.py \
     --appimage Sigma-File-Manager-2.2.1-zh.2-linux.AppImage \
+    --replace-binary src-tauri/target/release/sigma-file-manager \
     --out Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb \
-    --pkg-version 2.2.1-zh.2+uos20.1
+    --pkg-version 2.2.1-zh.2+uos20.2
 
-# 2) 在 UOS Desktop 20 (1070, glibc 2.28) 真机安装并运行 13 项门禁
+# 2) 在 UOS Desktop 20 (1070, glibc 2.28) 真机安装并运行 19 项门禁
 sudo dpkg -i Sigma-File-Manager-2.2.1-zh.2-uos20-amd64.deb
 python3 tools/linux/gate-uos20-deb.py --outdir /tmp/uos20-gate-out
 ```
 
-UOS Desktop 20 Professional (1070, `4.19.0-amd64-desktop`, `glibc 2.28`) **13/13 项真机门禁全部通过**：
+UOS Desktop 20 Professional (1070, `4.19.0-amd64-desktop`, `glibc 2.28`) **19/19 项真机门禁全部通过**：
 - `host_abi_is_glibc_2_28`: `glibc 2.28`
-- `deb_installed`: `install ok installed 2.2.1-zh.2+uos20.1`
+- `deb_installed`: `install ok installed 2.2.1-zh.2+uos20.2`
 - `runtime_manifest_present`: `patchedElfCount=222, runtimeObjects=23`
 - `window_created` & `webkit_processes_alive`: 主窗口（`1280x720`）、`WebKitNetworkProcess`、`WebKitWebProcess` 全部存活
 - `ld_library_path_unset`: `LD_LIBRARY_PATH=<unset>`（`dmesg` 零子进程段错误）
-- `gtk_modules_cleared` & `gio_module_dir_confined` & `webkit_zero_host_so`: `WebKitWebProcess` 映射宿主 `.so` 数量为 **0**，主进程无 `libgvfsdbus.so` 泄漏
-- `renders_content`: `distinct_colors=45875, grey_stddev=23.5755`
-- `x11_click_1_navigator` (`delta=0.0946`) & `x11_click_2_settings` (`delta=0.0873`): 两次真实 X11 点击分别切换至「导航器」与「设置」页
+- `gtk_modules_cleared` & `isolated_input_default_on`: `GTK_IM_MODULE=gtk-im-context-simple, GDK_CORE_DEVICE_EVENTS=1, XMODIFIERS=<unset>`
+- `gio_module_dir_confined` & `webkit_zero_host_so`: `WebKitWebProcess` 映射宿主 `.so` 数量为 **0**，主进程无 `libgvfsdbus.so` 泄漏
+- `startup_global_search_indexed`: 清空索引后首次启动扫描 `outcome=completed, reason=startup, indexed_item_count=175179, error=None`
+- `renders_content`: `distinct_colors=45727, grey_stddev=23.5438`
+- `x11_click_1_navigator` (`delta=0.0523`) & `x11_click_2_settings` (`delta=0.0215`): 真实 X11 点击切换「导航器」与「设置」页
+- `quick_search_input_works`: 点击 Quick Search 并输入 `Desktop`（`{"open": true, "val": "Desktop", "activeTag": "INPUT"}`）
+- `global_search_input_works`: 点击全局搜索并输入 `Desktop`（`{"disabled": false, "value": "Desktop", "driveGroups": 6, "headerText": "在 6 个驱动器上找到 239 项"}`）
+- `language_combobox_opens`: 点击「设置 -> 常规 -> 语言」下拉框正常展开 17 种语言且聚焦输入框不卡死（`{"open": true, "optionCount": 17, "activeTag": "INPUT"}`）
+- `theme_combobox_opens`: 点击「设置 -> 界面外观 -> 主题」下拉框正常展开（`{"open": true, "options": ["暗色", "亮色（开发中）", "系统"]}`）
 - `no_gl_or_loader_errors_in_log`: `offending=[]`

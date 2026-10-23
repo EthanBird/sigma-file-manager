@@ -163,8 +163,10 @@ def sha256_file(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--appimage', required=True, help='Input hardened v2.2.1-zh.2 AppImage')
+    ap.add_argument('--replace-binary', default=None,
+                    help='Optional freshly built usr/bin/sigma-file-manager binary from Ubuntu 22.04')
     ap.add_argument('--out', required=True, help='Output .deb file path')
-    ap.add_argument('--pkg-version', default='2.2.1-zh.2+uos20.1',
+    ap.add_argument('--pkg-version', default='2.2.1-zh.2+uos20.2',
                     help='Debian package version string')
     ap.add_argument('--work-dir', default='/var/tmp/sfm-uos20-deb-work')
     args = ap.parse_args()
@@ -191,6 +193,15 @@ def main():
     opt_root = os.path.join(pkg_root, INSTALL_ROOT.lstrip('/'))
     os.makedirs(os.path.dirname(opt_root), exist_ok=True)
     shutil.move(squashfs, opt_root)
+
+    if args.replace_binary:
+        src_bin = os.path.abspath(args.replace_binary)
+        if not os.path.isfile(src_bin):
+            sys.exit(f'FATAL: --replace-binary {src_bin!r} does not exist')
+        dst_bin = os.path.join(opt_root, 'usr/bin/sigma-file-manager')
+        shutil.copy2(src_bin, dst_bin)
+        os.chmod(dst_bin, 0o755)
+        print(f'[uos20-deb] replaced usr/bin/sigma-file-manager with {src_bin}')
 
     # Remove the bundled Ubuntu 22.04 /usr/bin/xdg-open script so xdg-open calls
     # fall through to the UOS 20 host's /usr/bin/xdg-open.
@@ -348,7 +359,13 @@ if [ "${{SFM_KEEP_AT_BRIDGE:-0}}" != "1" ]; then
     export NO_AT_BRIDGE=1
 fi
 
-if [ "${{SFM_ISOLATED_INPUT:-0}}" = "1" ]; then
+# On UOS 20 / Deepin DDE, focusing any <input> (Quick Search, BaseCombobox in
+# Language/Theme settings, Global Search) while DDE's fcitx / XInput2 bridge is
+# active mixes the host GTK/IM userland with the bundled Ubuntu 22.04 GTK 3 and
+# deadlocks the WebKitGTK input loop.  Default SFM_ISOLATED_INPUT to 1 on UOS 20
+# (pass SFM_ISOLATED_INPUT=0 to opt out).
+if [ "${{SFM_ISOLATED_INPUT:-1}}" != "0" ]; then
+    unset XMODIFIERS QT_IM_MODULE SDL_IM_MODULE CLUTTER_IM_MODULE
     export GTK_IM_MODULE=gtk-im-context-simple
     export GDK_CORE_DEVICE_EVENTS=1
     sfm_debug "isolated input enabled: GTK_IM_MODULE=gtk-im-context-simple GDK_CORE_DEVICE_EVENTS=1"
@@ -377,6 +394,11 @@ fi
 # WebKitNetworkProcess / WebKitWebProcess paths inside libwebkit2gtk-4.1.so.0
 # were patched by linuxdeploy to relative '././/lib/x86_64-linux-gnu/...',
 # requiring cwd to be $APPDIR/usr when spawning helpers.
+GS_STATUS="${{XDG_DATA_HOME:-$HOME/.local/share}}/com.sigma-file-manager.app/global-search/status.json"
+if [ -f "$GS_STATUS" ] && grep -q '"last_scan_outcome"[[:space:]]*:[[:space:]]*"failed"' "$GS_STATUS" 2>/dev/null; then
+    rm -f "$GS_STATUS"
+fi
+
 cd "$APPDIR/usr"
 exec "$APPDIR/usr/bin/sigma-file-manager" "$@"
 """

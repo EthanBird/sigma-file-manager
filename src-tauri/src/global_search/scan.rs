@@ -139,6 +139,15 @@ fn apply_committed_index_status(
 }
 
 pub fn global_search_init(app: tauri::AppHandle) -> Result<GlobalSearchStatus, String> {
+    {
+        let state = GLOBAL_SEARCH_STATE
+            .read()
+            .map_err(|error| error.to_string())?;
+        if state.status.is_scan_in_progress || state.status.is_committing || state.index.is_some() {
+            return Ok(state.status.clone());
+        }
+    }
+
     let base_dir = app
         .path()
         .app_data_dir()

@@ -49,10 +49,23 @@ else
 fi
 
 # Full DDE-style isolation: the bundled GTK uses its built-in input context and
-# GDK consumes only X11 core events.  Opt-in, because it disables native IME
-# pre-editing (Chinese/Japanese/Korean users must then paste), which is a worse
-# default than a rare hang.
-if [ "${SFM_ISOLATED_INPUT:-0}" = "1" ]; then
+# GDK consumes only X11 core events.  Enabled automatically on Deepin/UOS DDE
+# or fcitx sessions where focusing an <input> (Quick Search, BaseCombobox in
+# Settings, Global Search) otherwise deadlocks the WebKitGTK input loop; pass
+# SFM_ISOLATED_INPUT=0 to opt out, or SFM_ISOLATED_INPUT=1 to force it on.
+sfm_needs_isolated_input() {
+    case "${SFM_ISOLATED_INPUT:-auto}" in
+        1|true|yes) return 0 ;;
+        0|false|no) return 1 ;;
+    esac
+    case "${XDG_CURRENT_DESKTOP:-}:${DESKTOP_SESSION:-}:${GTK_IM_MODULE:-}:${XMODIFIERS:-}" in
+        *[Dd]eepin*|*[Uu][Oo][Ss]*|*fcitx*) return 0 ;;
+    esac
+    return 1
+}
+
+if sfm_needs_isolated_input; then
+    unset XMODIFIERS QT_IM_MODULE SDL_IM_MODULE CLUTTER_IM_MODULE
     export GTK_IM_MODULE=gtk-im-context-simple
     export GDK_CORE_DEVICE_EVENTS=1
     sfm_debug "isolated input: GTK_IM_MODULE=gtk-im-context-simple GDK_CORE_DEVICE_EVENTS=1"

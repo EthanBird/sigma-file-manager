@@ -403,46 +403,49 @@ export function useInit() {
       }
     }, 'Failed to restore startup tabs:');
 
-    runInBackgroundWithTrace(
-      'background:applyLaunchAtStartupPreference',
-      () => applyLaunchAtStartupPreference(userSettingsStore.userSettings.launchAtStartup),
-      'Failed to apply launch at startup preference:',
-    );
-    runInBackgroundWithTrace(
-      'background:userStats.runDeferredMaintenance',
-      () => userStatsStore.runDeferredMaintenance(),
-      'Failed to run deferred user stats maintenance:',
-    );
-    runInBackgroundWithTrace(
-      'background:globalSearch.initOnLaunch',
-      () => globalSearchStore.initOnLaunch(),
-      'Failed to initialize global search on launch:',
-    );
-    runInBackgroundWithTrace(
-      'background:terminals.init',
-      () => terminalsStore.init(),
-      'Failed to initialize terminals:',
-    );
-    runInBackgroundWithTrace(
-      'background:extensions.init',
-      () => extensionsStore.init(),
-      'Failed to initialize extensions:',
-    );
-    runInBackgroundWithTrace(
-      'background:archiveJobs.ensureEventListeners',
-      () => archiveJobsStore.ensureEventListeners(),
-      'Failed to initialize archive jobs:',
-    );
-    runInBackgroundWithTrace(
-      'background:deleteJobs.ensureEventListeners',
-      () => deleteJobsStore.ensureEventListeners(),
-      'Failed to initialize delete jobs:',
-    );
-    runInBackgroundWithTrace(
-      'background:copyMoveJobs.ensureEventListeners',
-      () => copyMoveJobsStore.ensureEventListeners(),
-      'Failed to initialize copy and move jobs:',
-    );
+    if (isMainWindow) {
+      runInBackgroundWithTrace(
+        'background:applyLaunchAtStartupPreference',
+        () => applyLaunchAtStartupPreference(userSettingsStore.userSettings.launchAtStartup),
+        'Failed to apply launch at startup preference:',
+      );
+      runInBackgroundWithTrace(
+        'background:userStats.runDeferredMaintenance',
+        () => userStatsStore.runDeferredMaintenance(),
+        'Failed to run deferred user stats maintenance:',
+      );
+      runInBackgroundWithTrace(
+        'background:globalSearch.initOnLaunch',
+        () => globalSearchStore.initOnLaunch(),
+        'Failed to initialize global search on launch:',
+      );
+      runInBackgroundWithTrace(
+        'background:terminals.init',
+        () => terminalsStore.init(),
+        'Failed to initialize terminals:',
+      );
+      runInBackgroundWithTrace(
+        'background:extensions.init',
+        () => extensionsStore.init(),
+        'Failed to initialize extensions:',
+      );
+      runInBackgroundWithTrace(
+        'background:archiveJobs.ensureEventListeners',
+        () => archiveJobsStore.ensureEventListeners(),
+        'Failed to initialize archive jobs:',
+      );
+      runInBackgroundWithTrace(
+        'background:deleteJobs.ensureEventListeners',
+        () => deleteJobsStore.ensureEventListeners(),
+        'Failed to initialize delete jobs:',
+      );
+      runInBackgroundWithTrace(
+        'background:copyMoveJobs.ensureEventListeners',
+        () => copyMoveJobsStore.ensureEventListeners(),
+        'Failed to initialize copy and move jobs:',
+      );
+    }
+
     runInBackgroundWithTrace(
       'background:quickView.ensureMainWindowDisplayedPathListener',
       () => quickViewStore.ensureMainWindowDisplayedPathListener(),
